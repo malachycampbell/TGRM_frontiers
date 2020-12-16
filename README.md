@@ -9,6 +9,11 @@ approach that jointly fits phenotypes for fatty acids and total lipid content. T
 
 ## Background
 This repo contains all the code used for the manuscript.
+
+* **1. Compute BLUPs for fatty acids**
+   - Diversity Panel [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/targBLUPs_DP.Rmd)
+   - Elite Panel [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/targBLUPs_Elite.Rmd)
+
 **
 
 ---
