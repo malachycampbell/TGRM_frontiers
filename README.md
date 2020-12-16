@@ -26,5 +26,8 @@ This repo contains all the code used for the manuscript.
 * **5. Genomic prediction for total lipid content - MK-TGRM-BLUP vs multi-trait gBLUP**
    - [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/MKvMT.Rmd)
    
+* **6. Genomic prediction for total lipid content - Multi-kernel prediction using kernels for most and least abundant fatty acids**
+   - [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/MostLeast.Rmd)
+   
 ---
 
