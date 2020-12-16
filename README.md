@@ -17,5 +17,7 @@ This repo contains all the code used for the manuscript.
 * **2. Estimate marker effects for each fatty acid**
    - File incluedes code for Figure 1. [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/estimateMarkerEffects.Rmd)
 
+* **3. Genomic prediction for fatty acids**
+   - [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/FAprediction.Rmd)
 ---
 
