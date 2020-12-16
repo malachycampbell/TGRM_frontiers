@@ -1,0 +1,424 @@
+---
+title: "Genomic prediction for total lipid - TGRM vs gBLUP"
+author: "Malachy Campbell"
+date: "12/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = "/Users/malachycampbell/Documents/Dropbox/Work/Oats/DivPanel_Met_HH/statTargetQC/flashr")
+```
+
+## NIRs for total lipid content
+### Prep data for Elite population.
+
+```{r, echo = T, eval = F}
+library(reshape2)
+
+rm(list = ls())
+
+InputDP <- readRDS("../../../KernelPred_Front/InputData_FAs.rds")
+InputFounders <- readRDS("../../../ElitePanel_Met/qualityPhenotypes/InputData_founders.rds")
+foundMap <- InputFounders$map
+foundMrks <- InputFounders$mrks
+missingMrks <- which(! InputDP$map$marker %in% InputFounders$map$marker)
+
+eff16.0 <- matrix(NA, ncol = 5, nrow = nrow(InputDP$map))
+eff18.1 <- matrix(NA, ncol = 5, nrow = nrow(InputDP$map))
+eff18.2 <- matrix(NA, ncol = 5, nrow = nrow(InputDP$map))
+eff18.0 <- matrix(NA, ncol = 5, nrow = nrow(InputDP$map))
+eff18.3 <- matrix(NA, ncol = 5, nrow = nrow(InputDP$map))
+eff14.0 <- matrix(NA, ncol = 5, nrow = nrow(InputDP$map))
+eff20.0 <- matrix(NA, ncol = 5, nrow = nrow(InputDP$map))
+eff20.1 <- matrix(NA, ncol = 5, nrow = nrow(InputDP$map))
+eff16.1 <- matrix(NA, ncol = 5, nrow = nrow(InputDP$map))
+
+BayesAlph <- c("BRR", "BL", "BayesA", "BayesB", "BayesC")
+for (i in 1:length(BayesAlph)){
+  eff16.0[,i] <- readRDS(paste0("../../../KernelPred_Front/FA/", BayesAlph[i] , "/", BayesAlph[i], "_C16.0.rds"))$ETA[[1]]$b
+  eff18.1[,i] <- readRDS(paste0("../../../KernelPred_Front/FA/", BayesAlph[i] , "/", BayesAlph[i], "_C18.1.rds"))$ETA[[1]]$b
+  eff18.2[,i] <- readRDS(paste0("../../../KernelPred_Front/FA/", BayesAlph[i] , "/", BayesAlph[i], "_C18.2.rds"))$ETA[[1]]$b
+  eff18.0[,i] <- readRDS(paste0("../../../KernelPred_Front/FA/", BayesAlph[i] , "/", BayesAlph[i], "_C18.0.rds"))$ETA[[1]]$b
+  eff18.3[,i] <- readRDS(paste0("../../../KernelPred_Front/FA/", BayesAlph[i] , "/", BayesAlph[i], "_C18.3.rds"))$ETA[[1]]$b
+  eff14.0[,i] <- readRDS(paste0("../../../KernelPred_Front/FA/", BayesAlph[i] , "/", BayesAlph[i], "_C14.0.rds"))$ETA[[1]]$b
+  eff20.0[,i] <- readRDS(paste0("../../../KernelPred_Front/FA/", BayesAlph[i] , "/", BayesAlph[i], "_C20.0.rds"))$ETA[[1]]$b
+  eff20.1[,i] <- readRDS(paste0("../../../KernelPred_Front/FA/", BayesAlph[i] , "/", BayesAlph[i], "_C20.1.rds"))$ETA[[1]]$b
+  eff16.1[,i] <- readRDS(paste0("../../../KernelPred_Front/FA/", BayesAlph[i] , "/", BayesAlph[i], "_C16.1.rds"))$ETA[[1]]$b
+  }
+
+row.names(eff16.0) <- row.names(eff18.1) <- row.names(eff18.2) <- row.names(eff18.0) <- row.names(eff18.3) <- row.names(eff14.0) <- row.names(eff20.0) <- row.names(eff20.1) <- row.names(eff16.1) <- InputDP$map$marker
+
+eff16.0 <- eff16.0[-missingMrks ,]
+eff18.1 <- eff18.1[-missingMrks ,]
+eff18.2 <- eff18.2[-missingMrks ,]
+eff18.0 <- eff18.0[-missingMrks ,]
+eff18.3 <- eff18.3[-missingMrks ,]
+eff14.0 <- eff14.0[-missingMrks ,]
+eff20.0 <- eff20.0[-missingMrks ,]
+eff20.1 <- eff20.1[-missingMrks ,]
+eff16.1 <- eff16.1[-missingMrks ,]
+
+foundMrks <- foundMrks[,colnames(foundMrks) %in% row.names(eff14.0)]
+foundMap <- foundMap[foundMap$marker %in% row.names(eff14.0) ,]
+
+InputFounders$mrkEff <- list(C16.0 = eff16.0,
+                             C18.1 = eff18.1,
+                             C18.2 = eff18.2,
+                             C18.0 = eff18.0,
+                             C18.3 = eff18.3,
+                             C14.0 = eff14.0,
+                             C20.0 = eff20.0,
+                             C20.1 = eff20.1,
+                             C16.1 = eff16.1)
+
+
+# Pad with NA for lines that are missing in each environment
+phenos <- InputFounders$phenotypes
+phenos$beta.glucan.NIR <- NULL
+phenos <- melt(phenos, id.vars = c("line", "trial"))
+phenos <- dcast(phenos, line + variable ~ trial, value.var = "value")
+colnames(phenos)[1:2] <- c("line", "trial")
+phenos <- melt(phenos, id.vars = c("line", "trial"))
+phenos <- dcast(phenos, line + variable ~ trial, value.var = "value")
+phenos$line <- droplevels(phenos$line)
+
+
+# Indexes for folds
+Lines <- unique(phenos$line)
+
+flds <- matrix(NA, ncol = 50, nrow = length(Lines))
+fldIndx <- rep(c(1:5), each = ceiling(length(Lines)/5))
+for(i in 1:50){
+  set.seed((451758 + i))
+  flds[,i] <- fldIndx[sample(1:length(fldIndx))][1:length(Lines)]
+}
+row.names(flds) <- Lines
+
+InputFounders$phenotypes <- phenos
+InputFounders$fldIndx <- flds
+InputFounders$mrks <- foundMrks
+InputFounders$map <- foundMap
+
+saveRDS(InputFounders, "../../../KernelPred_Front/NIRS/InputData_NIRS_founders.rds")
+write.csv(InputFounders$phenotypes, "../../../KernelPred_Front/Manuscript/SuppFiles/Elite_NIRS.csv", row.names = F)
+```
+
+### Create the TGRM
+```{r, echo = T, eval = F}
+library(argparse)
+
+rm(list = ls())
+
+parser <- ArgumentParser(description = "Does GWAS for many metabolites/traits")
+parser$add_argument("--arrayNo", dest="arrayNo", required=TRUE, help="Uses the array number to subset for fold")
+args <- parser$parse_args()
+
+JobNo <- as.numeric(args$arrayNo) #index for each method/trait/fold
+
+tmpMeth <- c("BRR", "BL", "BayesA", "BayesB", "BayesC")[JobNo]
+
+# InputFounds <- readRDS("../../../KernelPred_Front/NIRS/InputData_NIRS_founders.rds")
+InputFounds <- readRDS("../InputData_NIRS_founders.rds")
+
+phenos <- InputFounds$phenotypes
+#phenos$line <- droplevels(phenos$line)
+phenos <- phenos[order(phenos$variable, phenos$line) ,]
+
+Ys <- scale(phenos[c(3:ncol(phenos))], center = T, scale = T)
+Zsc <- scale(InputFounds$mrks, center = T, scale = T)
+
+###########################
+# Create the gBLUP kernel #
+###########################
+G_gBLUP <- tcrossprod(Zsc)/ncol(InputFounds$mrks)
+G_gBLUP <- G_gBLUP + diag(nrow(G_gBLUP))*0.0001
+
+# Incidence matrices for lines and trials
+Zg <- model.matrix(~line-1, data = phenos)
+Ze <- model.matrix(~variable-1, data = phenos)
+Zg <- Zg[, match(paste0("line", colnames(G_gBLUP)), colnames(Zg))]
+
+sum(colnames(Zg) == paste0("line", colnames(G_gBLUP)))
+
+ETA_gBLUP <- list()
+G_gBLUP <- Zg %*% G_gBLUP %*% t(Zg)
+ETA_gBLUP[[1]] <- list(K = G_gBLUP, model = "RKHS")
+envKernel <- Ze %*% t(Ze)
+ETA_gBLUP[[2]] <- list(K = envKernel, model = "RKHS")
+
+##############################
+# Create the informed kernel #
+##############################
+ETA_info <- list()
+for(i in 1:length(InputFounds$mrkEff)){
+  mrkEff <- InputFounds$mrkEff[[i]]
+  mrkEff <- (mrkEff[, which(tmpMeth == c("BRR", "BL", "BayesA", "BayesB", "BayesC"))]^2)/sum(mrkEff[, which(tmpMeth == c("BRR", "BL", "BayesA", "BayesB", "BayesC"))]^2)
+  G_info <- Zsc %*% diag(mrkEff) %*% t(Zsc)
+  G_info <- G_info + diag(nrow(G_info))*0.0001
+  G_info <- Zg %*% G_info %*% t(Zg)
+  ETA_info[[i]] <- list(K = G_info, model = "RKHS")
+}
+
+ETA_info[[(length(InputFounds$mrkEff) +  1)]] <- list(K = envKernel, model = "RKHS")
+
+saveRDS(list(ETA_info = ETA_info,
+             ETA_gBLUP = ETA_gBLUP),
+        paste0("../NIRs_", tmpMeth, ".rds"))
+```
+
+
+### Genomic prediction - TGRM vs gBLUP
+```{r, echo = T, eval = F}
+library(BGLR)
+library(argparse)
+
+rm(list = ls())
+
+parser <- ArgumentParser(description = "Does GWAS for many metabolites/traits")
+parser$add_argument("--arrayNo", dest="arrayNo", required=TRUE, help="Uses the array number to subset for fold")
+args <- parser$parse_args()
+
+JobNo <- as.numeric(args$arrayNo) #index for each method/trait/fold
+
+# InputFounds <- readRDS("../../../KernelPred_Front/NIRS/InputData_NIRS_founders.rds")
+InputFounds <- readRDS("../InputData_NIRS_founders.rds")
+
+lookupTable <- data.frame(Method = rep(c("BRR", "BL", "BayesA", "BayesB", "BayesC"), each = 5),
+                          Trait = rep("lipid.NIR", 25),
+                          Fold = rep(c(1:5), 5))
+
+## Submit only first 90 for testing
+tmpMeth <- lookupTable$Method[JobNo]
+tmpTrt <- lookupTable$Trait[JobNo]
+tmpFold <- lookupTable$Fold[JobNo]
+##
+
+## Load ETA object/Kernels
+ETAs <- readRDS(paste0("../NIRs_", tmpMeth, ".rds"))
+
+perChange <- function(NoCols = NULL, data = NULL){
+  return(((data[,1:(NoCols/2)] - data[,((NoCols/2) + 1):(NoCols)]) / data[,((NoCols/2) + 1):(NoCols)]) * 100)
+}
+
+# Subset and order markers
+# commonMrks <- intersect(InputElite$mapData$marker, InputDP$map$marker)
+# length(commonMrks) #54152
+# mrkEff <- InputElite$mrkEff[[tmpTrt]]; mrkEff <- mrkEff[row.names(mrkEff) %in% commonMrks ,]
+# dim(mrkEff)
+# mrks <- InputElite$mrks; mrks <- mrks[, colnames(mrks) %in% commonMrks]
+# mrkEff <- mrkEff[match(colnames(mrks), row.names(mrkEff)) ,]
+
+# mrks <- mrks[order(row.names(mrks)) ,] #order markers by line name
+phenos <- InputFounds$phenotypes
+#phenos$line <- droplevels(phenos$line)
+phenos <- phenos[order(phenos$variable, phenos$line) ,]
+
+Ys <- scale(phenos[c(3:ncol(phenos))], center = T, scale = T)
+Zsc <- scale(InputFounds$mrks, center = T, scale = T)
+
+###########################
+# Create the gBLUP kernel #
+###########################
+
+ETA_gBLUP <- ETAs$ETA_gBLUP
+
+##############################
+# Create the informed kernel #
+##############################
+ETA_info <- ETAs$ETA_info
+
+#Loop over the reps (columns of FldIndx). Select the appropriate fold 
+corMat <- matrix(NA, ncol = 2, nrow = 50)
+Ys <- Ys[, which(colnames(Ys) == tmpTrt), drop = F]
+
+for(i in 1:50){
+  trnLines <- row.names(InputFounds$fldIndx)[which(InputFounds$fldIndx[,i] != tmpFold)]
+  Ytrn <- Ys
+  Ytrn[! phenos$line %in% trnLines ,] <- NA
+  
+  ## Informed
+  fm <- BGLR::BGLR(y = Ytrn[,1], ETA = ETA_info, nIter = 20000, burnIn = 5000, thin = 5)
+  
+  corMat[i, 1] <- cor(Ys[!phenos$line %in% trnLines, drop = F ,], 
+                      (fm$ETA[[1]]$u[!phenos$line %in% trnLines] +
+                         fm$ETA[[2]]$u[!phenos$line %in% trnLines] +
+                         fm$ETA[[3]]$u[!phenos$line %in% trnLines] +
+                         fm$ETA[[4]]$u[!phenos$line %in% trnLines] +
+                         fm$ETA[[5]]$u[!phenos$line %in% trnLines] +
+                         fm$ETA[[6]]$u[!phenos$line %in% trnLines] +
+                         fm$ETA[[7]]$u[!phenos$line %in% trnLines] +
+                         fm$ETA[[8]]$u[!phenos$line %in% trnLines] +
+                         fm$ETA[[9]]$u[!phenos$line %in% trnLines]),
+                      use = "complete.obs")
+  
+  ## gBLUP
+  fm <- BGLR::BGLR(y = Ytrn[,1], ETA = ETA_gBLUP, nIter = 20000, burnIn = 5000, thin = 5)
+  
+  corMat[i, 2] <- cor(Ys[!phenos$line %in% trnLines, drop = F ,], 
+                      (fm$ETA[[1]]$u[!phenos$line %in% trnLines]),
+                      use = "complete.obs")
+}
+
+saveRDS(corMat, paste0("../NIRS/output/NIRS_", tmpTrt, "_", tmpMeth, "_", tmpFold, ".rds"))
+```
+
+### Compile results and compare TGRM vs gBLUP
+```{r, echo = T, eval = F}
+library(plyr)
+
+rm(list = ls())
+
+resFiles <- list.files(path = "../../../KernelPred_Front/NIRS/output/", pattern = ".rds", full.names = T)
+
+CVresults <- NULL
+for(i in resFiles){
+  tmp <- as.data.frame(readRDS(i))
+  fold <- sub(".*_", "", i)
+  fold <- sub(".rds", "", fold)
+  appr <- sub(".*NIR_", "", i)
+  appr <- sub("_.*", "", appr)
+  
+  tmp$fold <- fold
+  tmp$rep <- 1:50
+  tmp$appr <- appr
+  CVresults <- rbind(CVresults, tmp)
+}
+
+colnames(CVresults)[1:2] <- c("Infor", "gBLUP")
+CVresults <- ddply(CVresults, .(appr, rep), summarise, Infor = mean(Infor), gBLUP = mean(gBLUP)) # average across folds
+
+perRes <- CVresults
+perRes$perCh <- (perRes$Infor - perRes$gBLUP) / perRes$gBLUP * 100
+perRes$Imp <- ifelse(perRes$perCh > 0, 1, 0)
+ddply(perRes, .(appr), summarise, Freq = mean(Imp))
+#     appr Freq
+# 1 BayesA    1
+# 2 BayesB    1
+# 3 BayesC    1
+# 4     BL    1
+# 5    BRR    1
+
+
+CVresults_Cor <- CVresults[c(1:3)]
+CVresults_Cor_g <- CVresults[c(1,2,4)]
+CVresults_Cor_g <- ddply(CVresults_Cor_g, .(appr, rep), summarise, gBLUP = mean(gBLUP))
+CVresults_Cor_g$appr <- "gBLUP"
+colnames(CVresults_Cor) <- colnames(CVresults_Cor_g) <- c("appr", "rep", "r")
+CVresults_Cor <- rbind(CVresults_Cor, CVresults_Cor_g)
+
+
+pdf("../../../KernelPred_Front/Manuscript/Figs/NIRs_PA.pdf", h = 2.3, w = 4.2)
+nf = layout(rbind(c(1,1,1,1,1,1, 2,2,2,2,2), c(1,1,1,1,1,1, 2,2,2,2,2)))
+
+###########
+# Panel A #
+###########
+par(mar = c(4.5, 4.0, 1.5, 2.0), mgp=c(2.5,1,0), xpd = T)
+boxplot(r ~ appr, las = 2, CVresults_Cor, medlwd = 1.25,
+        at = c(1,2,3,4,5,6), 
+        ylab = "r", col = c(wesanderson::wes_palette("Darjeeling1")[1], 
+                            wesanderson::wes_palette("Darjeeling2")[1:4],
+                            wesanderson::wes_palette("Darjeeling1")[2]), 
+        xlab = "", cex = 0.5, xaxt = "n", yaxt = "n")
+
+axis(1, at = c(1,2,3,4,5,6), 
+     labels = c("Bayes A", "Bayes B", expression("Bayes C"*pi), "BL", "BRR", "gBLUP"), 
+     las = 2, cex.axis = 0.7, font = 1)
+axis(2, cex.axis = 0.7, las = 1)
+
+# legend("topleft", legend = c("Bayes A", "Bayes B", expression("Bayes C"*pi), "BL", "BRR", "gBLUP"), 
+#        fill = c(wesanderson::wes_palette("Darjeeling1")[1], 
+#                 wesanderson::wes_palette("Darjeeling2")[1:4],
+#                 wesanderson::wes_palette("Darjeeling1")[2]), bty = "n", cex = 0.65)
+
+mtext("A", 2, adj=5, las=1, padj=-8, font=1, cex=0.8)
+###########
+# Panel B #
+###########
+par(mar = c(4.5, 4.0, 1.5, 2.0), mgp=c(2.5,1,0), xpd = T)
+boxplot(perCh ~ appr, las = 2, perRes, medlwd = 1.25,
+        at = c(1,2,3,4,5), 
+        ylab = "% Diff.", col = c(wesanderson::wes_palette("Darjeeling1")[1], 
+                            wesanderson::wes_palette("Darjeeling2")[1:4]), 
+        xlab = "", cex = 0.5, xaxt = "n", yaxt = "n")
+
+axis(1, at = c(1,2,3,4,5), 
+     labels = c("Bayes A", "Bayes B", expression("Bayes C"*pi), "BL", "BRR"), 
+     las = 2, cex.axis = 0.7, font = 1)
+axis(2, cex.axis = 0.7, las = 1)
+
+mtext("B", 2, adj=5, las=1, padj=-8, font=1, cex=0.8)
+dev.off()
+```
+
+### Compare Bayesian Methods
+```{r, echo = T, eval = F}
+library(plyr)
+
+rm(list = ls())
+
+Meth <- c("BRR", "BL", "BayesA", "BayesB", "BayesC")
+flds <- 1:5
+
+allRes <- NULL
+for(m in Meth){
+  for(fld in flds){
+  file <- paste0("../../../KernelPred_Front/NIRS/output/NIRS_lipid.NIR_", m, "_", fld, ".rds")
+  if(file.exists(file)){
+    tmp <- readRDS(file)
+    allRes <- rbind(allRes, 
+                    data.frame(tmp, Method = m, 
+                                    Fold = fld,
+                                    Rep = 1:50))
+    }else{
+      next
+    }
+  }
+  }
+
+colnames(allRes)[1:2] <- c("Info", "gBLUP")
+
+allRes <- ddply(allRes, .(Method, Rep), summarise, 
+                Info = mean(Info), 
+                gBLUP = mean(gBLUP, na.rm = T))
+
+allRes_Cor <- allRes[c(1:3)]
+
+allRes_Cor <- reshape2::dcast(allRes_Cor, Rep ~ Method, value.var = "Info")
+
+perDiff_func <- function(data = NULL, BaseMeth = NULL, Method = NULL){
+  tmpData <- data
+  perDiff <- ((tmpData[c(Method)] - tmpData[c(BaseMeth)])/tmpData[c(BaseMeth)] )*100
+  return(perDiff)
+}
+
+Meths <- colnames(allRes_Cor)[2:6]
+resDF <- matrix(NA, ncol = 5, nrow = 5)
+colnames(resDF) <- row.names(resDF) <- Meths
+for(i in 1:(length(Meths))){ # loop over base method
+  for(j in 1:length(Meths)){ # loop over all other methods
+    BaseM <- Meths[i]
+    intM <- Meths[j]
+    tmpPD <- perDiff_func(data = allRes_Cor, BaseMeth = BaseM, Method = intM)
+    resDF[i,j] <- apply(tmpPD, 2, function(x) sum(x > 0, na.rm = T)/length(x))
+    }
+  }
+
+
+print(xtable::xtable(resDF), include.rownames=FALSE)
+```
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{rrrrr}
+  \hline
+BayesA & BayesB & BayesC & BL & BRR \\ 
+  \hline
+0.00 & 0.38 & 0.62 & 0.64 & 0.76 \\ 
+  0.62 & 0.00 & 0.66 & 0.82 & 0.80 \\ 
+  0.38 & 0.34 & 0.00 & 0.54 & 0.70 \\ 
+  0.36 & 0.18 & 0.46 & 0.00 & 0.62 \\ 
+  0.24 & 0.20 & 0.30 & 0.38 & 0.00 \\ 
+   \hline
+\end{tabular}
+\end{table}
