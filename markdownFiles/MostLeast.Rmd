@@ -1,0 +1,259 @@
+---
+title: "MK-TGRM-BLUP: most and least abundant fatty acids"
+author: "Malachy Campbell"
+date: "12/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Multikernel with kernels constructed for the top most and least bundant fatty acids.
+## Genomic Prediction
+```{r, echo = T, eval = F}
+library(plyr)
+library(BGLR)
+library(argparse)
+
+rm(list = ls())
+
+parser <- ArgumentParser(description = "Does GWAS for many metabolites/traits")
+parser$add_argument("--arrayNo", dest="arrayNo", required=TRUE, help="Uses the array number to subset for fold")
+args <- parser$parse_args()
+
+JobNo <- as.numeric(args$arrayNo) #index for each method/trait/fold
+
+# InputFounds <- readRDS("../../../KernelPred_Front/NIRS/InputData_NIRS_founders.rds")
+InputFounds <- readRDS("../InputData_NIRS_founders.rds")
+# InputMTM <- readRDS("../../../KernelPred_Front/NIRS/InputData_multitrait.rds")
+InputMTM <- readRDS("../InputData_multitrait.rds")
+
+lookupTable <- data.frame(Method = rep(c("BRR", "BL", "BayesA", "BayesB", "BayesC"), each = 5),
+                          Trait = rep("lipid.NIR", 25),
+                          Fold = rep(c(1:5), 5))
+
+## Submit only first 90 for testing
+tmpMeth <- lookupTable$Method[JobNo]
+tmpTrt <- lookupTable$Trait[JobNo]
+tmpFold <- lookupTable$Fold[JobNo]
+##
+
+####################
+## Set up for MTM ##
+####################
+MTM_phenos <- InputMTM$phenotypes
+Ys_MTM <- scale(MTM_phenos[2:ncol(MTM_phenos)], center = T, scale = T)
+nTraits <- ncol(Ys_MTM)
+G <- InputMTM$GRM
+sum(colnames(G) == MTM_phenos$line) == nrow(MTM_phenos)
+
+ETA_MTM <- list()
+ETA_MTM[[1]] <- list(K = G, model = "RKHS", Cov = list(df0 = nTraits))
+
+#####################################
+## Set uo for informed multikernel ##
+#####################################
+## Load ETA object/Kernels
+# ETAs <- readRDS(paste0("../../../KernelPred_Front/FA/FA_Kernels/NIRs_", tmpMeth, ".rds"))
+ETAs <- readRDS(paste0("../MTM_NIRs_", tmpMeth, ".rds"))
+
+phenos <- InputFounds$phenotypes
+phenos <- ddply(phenos, .(line), summarise, lipid.NIR = mean(lipid.NIR, na.rm = T))
+phenos <- phenos[order(phenos$line) ,]
+Ys <- scale(phenos[, 2, drop = F], center = T, scale = T)
+
+###########################
+# Create the gBLUP kernel #
+###########################
+
+ETA_gBLUP <- ETAs$ETA_gBLUP
+
+##############################
+# Create the informed kernel #
+##############################
+ETA_info_most <- list()
+ETA_info_most[[1]] <- ETAs$ETA_info[[1]]
+ETA_info_most[[2]] <- ETAs$ETA_info[[2]]
+ETA_info_most[[3]] <- ETAs$ETA_info[[3]]
+
+ETA_info_least <- list()
+ETA_info_least[[1]] <- ETAs$ETA_info[[6]]
+ETA_info_least[[2]] <- ETAs$ETA_info[[9]]
+ETA_info_least[[3]] <- ETAs$ETA_info[[7]]
+
+#Loop over the reps (columns of FldIndx). Select the appropriate fold 
+corMat <- matrix(NA, ncol = 3, nrow = 50)
+
+na.indx <- apply(Ys_MTM, 1, function(x) sum(!is.na(x))/length(x))
+alwaysTrnLines <- MTM_phenos$line[which(na.indx == 1)]
+
+for(i in 1:50){
+  trnLines <- c(alwaysTrnLines, 
+                row.names(InputMTM$fldIndx)[which(InputMTM$fldIndx[,i] != tmpFold)])
+  tstLines <- row.names(InputMTM$fldIndx)[! row.names(InputMTM$fldIndx) %in% trnLines]
+  
+  Ytrn <- Ys
+  Ytrn[! phenos$line %in% trnLines ,] <- NA
+  
+  ## Informed
+  fm <- BGLR::BGLR(y = Ytrn[,1], ETA = ETA_info_most, nIter = 20000, burnIn = 5000, thin = 5)
+  
+  corMat[i, 1] <- cor(Ys[phenos$line %in% tstLines, drop = F ,], 
+                      (fm$ETA[[1]]$u[ phenos$line %in% tstLines] +
+                         fm$ETA[[2]]$u[ phenos$line %in% tstLines] +
+                         fm$ETA[[3]]$u[ phenos$line %in% tstLines]),
+                      use = "complete.obs")
+  
+  fm <- BGLR::BGLR(y = Ytrn[,1], ETA = ETA_info_least, nIter = 20000, burnIn = 5000, thin = 5)
+  
+  corMat[i, 2] <- cor(Ys[phenos$line %in% tstLines, drop = F ,], 
+                      (fm$ETA[[1]]$u[ phenos$line %in% tstLines] +
+                         fm$ETA[[2]]$u[ phenos$line %in% tstLines] +
+                         fm$ETA[[3]]$u[ phenos$line %in% tstLines]),
+                      use = "complete.obs")
+  
+  ## MTM
+  Ytrn_MTM <- as.data.frame(Ys_MTM)
+  Ytrn_MTM[! MTM_phenos$line %in% trnLines ,]$lipid.NIR <- NA
+  fm <- BGLR::Multitrait(y = as.matrix(Ytrn_MTM), ETA = ETA_MTM, nIter = 20000, burnIn = 5000, thin = 5)
+  
+  corMat[i, 3] <- cor( (Ys_MTM[ MTM_phenos$line %in% tstLines, drop = F ,][,1]), 
+                       (fm$ETA[[1]]$u[ MTM_phenos$line %in% tstLines ,][,1]),
+                      use = "complete.obs")
+}
+
+saveRDS(corMat, paste0("../NIRS/output_MTM_ML/MTM_NIRS_", tmpTrt, "_", tmpMeth, "_", tmpFold, ".rds"))
+```
+
+## Compile results
+
+```{r, echo = T, eval = F}
+library(plyr)
+
+rm(list = ls())
+
+resFiles <- list.files(path = "../../../KernelPred_Front/NIRS/output_MTM_ML/", pattern = "MTM_*", full.names = T)
+
+CVresults <- NULL
+for(i in resFiles){
+  tmp <- as.data.frame(readRDS(i))
+  fold <- sub(".*_", "", i)
+  fold <- sub(".rds", "", fold)
+  appr <- sub(".*NIR_", "", i)
+  appr <- sub("_.*", "", appr)
+  
+  tmp$fold <- fold
+  tmp$rep <- 1:50
+  tmp$appr <- appr
+  CVresults <- rbind(CVresults, tmp)
+}
+
+colnames(CVresults)[1:3] <- c("Inf_most", "Inf_least", "MTM")
+CVresults <- ddply(CVresults, .(appr, rep), summarise, Inf_most = mean(Inf_most), Inf_least = mean(Inf_least), MTM = mean(MTM)) # average across folds
+
+perRes <- CVresults
+perRes$perCh_LvMTM <- (perRes$Inf_least - perRes$MTM) / perRes$MTM * 100
+perRes$perCh_MvMTM <- (perRes$Inf_most - perRes$MTM) / perRes$MTM * 100
+perRes$perCh_MvL <- (perRes$Inf_most - perRes$Inf_least) / perRes$MTM * 100
+
+perRes$Imp_LvMTM <- ifelse(perRes$perCh_LvMTM > 0, 1, 0)
+perRes$Imp_MvMTM <- ifelse(perRes$perCh_MvMTM > 0, 1, 0)
+perRes$Imp_MvL <- ifelse(perRes$perCh_MvL > 0, 1, 0)
+
+ddply(perRes, .(appr), summarise, Freq = mean(Imp_LvMTM))
+#     appr Freq
+# 1 BayesA    1
+# 2 BayesB    1
+# 3 BayesC    1
+# 4     BL    1
+# 5    BRR    1
+
+ddply(perRes, .(appr), summarise, Freq = mean(Imp_MvMTM))
+#     appr Freq
+# 1 BayesA    1
+# 2 BayesB    1
+# 3 BayesC    1
+# 4     BL    1
+# 5    BRR    1
+
+ddply(perRes, .(appr), summarise, Freq = mean(Imp_MvL))
+#     appr Freq
+# 1 BayesA 0.28
+# 2 BayesB 0.64
+# 3 BayesC 0.28
+# 4     BL 0.24
+# 5    BRR 0.42
+
+CVresults_Cor <- CVresults[c(1:4)]
+CVresults_Cor_mtm <- CVresults[c(1,2,5)]
+CVresults_Cor_mtm <- ddply(CVresults_Cor_mtm, .(appr, rep), summarise, MTM = mean(MTM))
+CVresults_Cor_mtm$appr <- "MTM"; CVresults_Cor_mtm$type <- "allMrks"
+CVresults_Cor_mtm <- CVresults_Cor_mtm[c("appr", "rep", "type", "MTM")]
+colnames(CVresults_Cor_mtm)[4] <- "r"
+CVresults_Cor <- reshape2::melt(CVresults_Cor, id.vars = c("appr", "rep"))
+colnames(CVresults_Cor) <- colnames(CVresults_Cor_mtm) <- c("appr", "rep", "type", "r")
+CVresults_Cor <- rbind(CVresults_Cor, CVresults_Cor_mtm)
+CVresults_Cor$type <- factor(CVresults_Cor$type, levels = c("Inf_least", "Inf_most", "allMrks"))
+
+perRes_fin <- rbind(data.frame(appr = perRes$appr, rep = perRes$rep, type = "Least", perCh = perRes$perCh_LvMTM),
+                    data.frame(appr = perRes$appr, rep = perRes$rep, type = "Most", perCh = perRes$perCh_MvMTM))
+
+pdf("../../../KernelPred_Front/Manuscript/Figs/NIRs_PA_MTM_ML.pdf", h = 5.7, w = 4.2)
+nf = layout(rbind(c(1,1,1,1), c(2,2,2,2)))
+
+###########
+# Panel A #
+###########
+par(mar = c(4.0, 4.0, 1.5, 2.0), mgp=c(2.5,1,0), xpd = T)
+boxplot(r ~ droplevels(interaction(appr,type)), las = 2, CVresults_Cor, medlwd = 1.25,
+        at = c(1,2,3,4,5, 7,8,9,10,11, 13), 
+        ylab = "r", col = c(rep(c(wesanderson::wes_palette("Darjeeling1")[1], 
+                                  wesanderson::wes_palette("Darjeeling2")[1:4]),2),
+                            wesanderson::wes_palette("Darjeeling1")[2]), 
+        xlab = "", cex = 0.5, xaxt = "n", yaxt = "n")
+
+# axis(1, at = c(3,9,13), 
+#      labels = c("Most", "Least", "MT-gBLUP"), 
+#      las = 2, cex.axis = 0.7, font = 1)
+
+
+axis(2, cex.axis = 0.7, las = 1)
+
+segments(x0 = 1, x1 = 5, y0 = (min(CVresults_Cor$r) - (max(CVresults_Cor$r)-min(CVresults_Cor$r))*0.075),
+         y1 = (min(CVresults_Cor$r) - (max(CVresults_Cor$r)-min(CVresults_Cor$r))*0.075), lty = 1, lwd = 2)
+segments(x0 = 7, x1 = 11, y0 = (min(CVresults_Cor$r) - (max(CVresults_Cor$r)-min(CVresults_Cor$r))*0.075),
+         y1 = (min(CVresults_Cor$r) - (max(CVresults_Cor$r)-min(CVresults_Cor$r))*0.075), lty = 1, lwd = 2)
+text(x = 3, y = (min(CVresults_Cor$r) - (max(CVresults_Cor$r)-min(CVresults_Cor$r))*0.15), labels = "Least Abundant", cex = 1)
+text(x = 9, y = (min(CVresults_Cor$r) - (max(CVresults_Cor$r)-min(CVresults_Cor$r))*0.15), labels = "Most Abundant", cex = 1)
+
+legend("bottomleft", legend = c("Bayes A", "Bayes B", expression("Bayes C"*pi), "BL", "BRR", "MT-gBLUP"),
+       fill = c(wesanderson::wes_palette("Darjeeling1")[1],
+                wesanderson::wes_palette("Darjeeling2")[1:4],
+                wesanderson::wes_palette("Darjeeling1")[2]), bty = "n", cex = 0.7)
+
+mtext("A", 2, adj=5, las=1, padj=-10.5, font=1, cex=0.8)
+###########
+# Panel B #
+###########
+par(mar = c(4.0, 4.0, 1.5, 2.0), mgp=c(2.5,1,0), xpd = T)
+boxplot(perCh ~ appr*type, las = 2, perRes_fin, medlwd = 1.25,
+        at = c(1,2,3,4,5, 7,8,9,10,11),
+        ylab = "% Diff.", col = c(wesanderson::wes_palette("Darjeeling1")[1],
+                                  wesanderson::wes_palette("Darjeeling2")[1:4]),
+        xlab = "", cex = 0.5, xaxt = "n", yaxt = "n")
+
+
+axis(2, cex.axis = 0.7, las = 1)
+
+segments(x0 = 1, x1 = 5, y0 = (min(perRes_fin$perCh) - (max(perRes_fin$perCh)-min(perRes_fin$perCh))*0.075),
+         y1 = (min(perRes_fin$perCh) - (max(perRes_fin$perCh)-min(perRes_fin$perCh))*0.075), lty = 1, lwd = 2)
+segments(x0 = 7, x1 = 11, y0 = (min(perRes_fin$perCh) - (max(perRes_fin$perCh)-min(perRes_fin$perCh))*0.075),
+         y1 = (min(perRes_fin$perCh) - (max(perRes_fin$perCh)-min(perRes_fin$perCh))*0.075), lty = 1, lwd = 2)
+text(x = 3, y = (min(perRes_fin$perCh) - (max(perRes_fin$perCh)-min(perRes_fin$perCh))*0.15), labels = "Least Abundant", cex = 1)
+text(x = 9, y = (min(perRes_fin$perCh) - (max(perRes_fin$perCh)-min(perRes_fin$perCh))*0.15), labels = "Most Abundant", cex = 1)
+
+mtext("B", 2, adj=5, las=1, padj=-10.5, font=1, cex=0.8)
+
+dev.off()
+```
