@@ -19,5 +19,12 @@ This repo contains all the code used for the manuscript.
 
 * **3. Genomic prediction for fatty acids**
    - [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/FAprediction.Rmd)
+   
+* **4. Genomic prediction for total lipid content - MK-TGRM-BLUP vs gBLUP**
+   - [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/NIRS_TGRMvgBLUP.Rmd)
+   
+* **5. Genomic prediction for total lipid content - MK-TGRM-BLUP vs multi-trait gBLUP**
+   - [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/MKvMT.Rmd)
+   
 ---
 
