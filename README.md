@@ -29,5 +29,11 @@ This repo contains all the code used for the manuscript.
 * **6. Genomic prediction for total lipid content - Multi-kernel prediction using kernels for most and least abundant fatty acids**
    - [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/MostLeast.Rmd)
    
+* **7. Manhattan Plots**
+   - [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/ManPlots.Rmd)
+   
+* **8. Dendrogram**
+   - [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/dend.Rmd)
+   
 ---
 
