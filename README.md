@@ -14,8 +14,8 @@ This repo contains all the code used for the manuscript.
    - Diversity Panel [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/targBLUPs_DP.Rmd)
    - Elite Panel [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/targBLUPs_Elite.Rmd)
 
-** **2. Estiamte marker effects for each fatty acid**
-   - [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/estimateMarkerEffects.Rmd)
+** **2. Estimate marker effects for each fatty acid**
+   - File incluedes code for Figure 1. [.Rmd File](https://github.com/malachycampbell/TGRM_frontiers/blob/master/markdownFiles/estimateMarkerEffects.Rmd)
 
 ---
 
