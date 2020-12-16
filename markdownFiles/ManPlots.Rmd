@@ -1,0 +1,376 @@
+---
+title: "Manhattan Plots"
+author: "Malachy Campbell"
+date: "12/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = "/Users/malachycampbell/Documents/Dropbox/Work/Oats/DivPanel_Met_HH/statTargetQC/flashr")
+```
+
+## Plot marker effects for fatty acids in Diversity panel
+```{r, echo = T, eval = F}
+rm(list = ls())
+
+manhattanOat <- function(dataframe, colors=c("gray10", "gray50"), ymax="max", xaxis.cex=1, yaxis.cex = 1, suggestiveline=NULL, genomewideline=NULL, annotate=NULL, xlas = NULL, xsrt = NULL,  Title, ...){
+  # Like regular oat, but more metropolitan
+  d=dataframe
+  
+  #throws error if you don't have columns named CHR, BP, and P in your data frame.
+  if (!("CHR" %in% names(d) & "BP" %in% names(d) & "Beta" %in% names(d))) stop("Make sure your data frame contains columns CHR, BP, and Beta")
+  
+  # sets colors based on colors argument.
+  colors <- rep(colors, length(unique((d$CHR))))[1:length(unique((d$CHR)))]
+  
+  # sets the maximum value on the y axis (on the -log10p scale).
+  if (ymax == "max") ymax<-ceiling(max(d$Beta))
+  
+  # creates continuous position markers for x axis for entire chromosome. also creates tick points.
+  d$pos=NA
+  ticks=NULL
+  lastbase=0
+  numchroms=length(unique(d$CHR))
+  if (numchroms==1) {
+    d$pos=d$BP
+    ticks=floor(length(d$pos))/2+1
+  } else {
+    for (i in 1:length(unique(d$CHR))) {
+      if (i==1) {
+        d[d$CHR %in% unique(d$CHR)[i], ]$pos=d[d$CHR %in% unique(d$CHR)[i] , ]$BP
+      } else {
+        lastbase=lastbase+tail(subset(d, CHR == unique(d$CHR)[i-1])$BP, 1)
+        d[d$CHR %in% unique(d$CHR)[i], ]$pos=d[d$CHR %in% unique(d$CHR)[i], ]$BP+lastbase
+      }
+      ticks=c(ticks, d[d$CHR %in% unique(d$CHR)[i], ]$pos[floor(length(d[d$CHR %in% unique(d$CHR)[i], ]$pos)/2)+1])
+    }
+  }
+  
+  # create the plot
+    with(d, plot(pos, Beta, ylim = c(0,ymax), ylab = "|a|", xlab = "Chromosome", xaxt = "n", type = "n", cex = 0.3, yaxt = "n", main = Title, ...))
+    # then make an axis that has chromosome number instead of position
+    axis(1, at = ticks, lab = unique(d$CHR), cex.axis = xaxis.cex, las = xlas, srt = xsrt)
+    axis(2, cex.axis = yaxis.cex)
+    icol=1
+    for (i in unique(d$CHR)) {
+    	with(d[d$CHR %in% i, ],points(pos, Beta, col=colors[icol], cex=0.3, ...))
+    	icol = icol+1
+  }
+  
+  # create a new data frame with rows from the original data frame where SNP is in annotate character vector.
+  # then plot those points over the original graph, but with a larger point size and a different color.
+  if (!is.null(annotate)) {
+    d.annotate=d[which(d$SNP %in% annotate), ]
+    with(d.annotate, points(pos, Beta, col="red", cex=0.5, ...))
+  }
+  
+  # add threshold lines
+  if (suggestiveline) abline(h=suggestiveline, col="blue")
+  if (genomewideline) abline(h=genomewideline, col="red")
+}
+
+
+## 
+InputElite <- readRDS("../../../KernelPred_Front/InputData_FAs_elite.rds")
+avenaMap <- read.delim("../../GenoData/avena_map.txt", header = T, sep = "\t")
+FAs <- c("14.0", "16.0", "16.1", "18.0", "18.1", "18.2", "18.3", "20.0", "20.1")
+
+for(i in FAs){
+  tmpBeta <- InputElite$mrkEff[[paste0("C", i)]][, 4, drop = F]
+  betas <- data.frame(tmpBeta); colnames(betas) <- "beta"
+  
+  mapData <- merge(avenaMap, betas, by.x = "Marker", by.y = 0, all.x = F, all.y = T)
+  tmpMap <- mapData[is.na(mapData$Chrom) ,]
+  tmpMap$Chrom <- "Unk"
+  tmpMap$Start_pos <- 1:nrow(tmpMap)
+  mapData <- rbind(mapData[!is.na(mapData$Chrom) ,], tmpMap)
+  mapData$beta <- abs(mapData$beta)
+  
+  tmpRes <- data.frame(CHR = mapData$Chrom, BP = mapData$Start_pos, 
+                       Beta = mapData$beta, marker = mapData$Marker)
+  
+  tmpRes <- tmpRes[order(tmpRes$CHR, tmpRes$BP) ,] 
+  tmpRes.chr <- tmpRes[!tmpRes$CHR %in% "Unk" ,]; tmpRes.unk <- tmpRes[tmpRes$CHR %in% "Unk" ,]
+  tmpRes.chr <- droplevels(tmpRes.chr); tmpRes.unk <- droplevels(tmpRes.unk)
+  
+  Ymax <- max(tmpRes$Beta)*1.2; print(Ymax)
+  
+  pdf(paste0("../../../KernelPred_Front/Manuscript/SuppFigs/DP_FA_C", i, ".pdf"), h = 2.4, w = 6.2)
+  nf = layout(rbind(c(1,1,2), 
+                    c(1,1,2)))
+  trait <- sub("\\.", ":", i)
+  manhattanOat(dataframe = tmpRes.chr, suggestiveline = F, genomewideline = F, Title = paste0("C", trait),
+               xaxis.cex = 0.5, xlas = 2, xsrt = 45, ymax = Ymax)
+  
+  plot(tmpRes.unk$BP, tmpRes.unk$Beta, pch = 19, cex = 0.3, main = paste0("C", trait), 
+       ylab = "|a|", xlab = "index", ylim = c(0, Ymax))
+  
+  dev.off()
+}
+```
+
+
+# Plot marker effects for phenotypes in elite population
+## Fatty acids
+```{r, echo = T, eval = F}
+rm(list = ls())
+
+library(BGLR)
+library(argparse)
+
+parser <- ArgumentParser(description = "Does GWAS for many metabolites/traits")
+parser$add_argument("--arrayNo", dest="arrayNo", required=TRUE, help="Uses the array number to subset for fold")
+args <- parser$parse_args()
+i <- as.numeric(args$arrayNo) #index for each method/trait/fold
+
+InputElite <- readRDS("../InputData_FAs_elite.rds")
+
+
+mrks <- InputElite$mrks
+mrks <- as.matrix(mrks[2:ncol(mrks)]); mrks <- scale(mrks, center = T, scale = T)
+map <- InputElite$mapData
+phenos <- InputElite$phenotypes
+Ys <- phenos[3:ncol(phenos)]
+
+Zg <- model.matrix(~line-1, data = phenos)
+Ze <- model.matrix(~env-1, data = phenos)
+
+ETA <- list()
+Wmat <- Zg %*% mrks
+ETA[[1]] <- list(X = Wmat, model = "BayesB")
+envKernel <- Ze %*% t(Ze)
+ETA[[2]] <- list(K = envKernel, model = "RKHS")
+
+# for(i in 1:ncol(Ys)){
+tmpmod <- BGLR(y = Ys[,i], ETA = ETA, nIter = 20000, burnIn = 5000, thin = 5)
+# }
+saveRDS(tmpmod, paste0("../Betas_", colnames(Ys)[i], ".rds"))
+```
+
+Manhattan Plot
+```{r, echo = T, eval = F}
+rm(list = ls())
+
+manhattanOat <- function(dataframe, colors=c("gray10", "gray50"), ymax="max", xaxis.cex=1, yaxis.cex = 1, suggestiveline=NULL, genomewideline=NULL, annotate=NULL, xlas = NULL, xsrt = NULL,  Title, ...){
+  # Like regular oat, but more metropolitan
+  d=dataframe
+  
+  #throws error if you don't have columns named CHR, BP, and P in your data frame.
+  if (!("CHR" %in% names(d) & "BP" %in% names(d) & "Beta" %in% names(d))) stop("Make sure your data frame contains columns CHR, BP, and Beta")
+  
+  # sets colors based on colors argument.
+  colors <- rep(colors, length(unique((d$CHR))))[1:length(unique((d$CHR)))]
+  
+  # sets the maximum value on the y axis (on the -log10p scale).
+  if (ymax == "max") ymax<-ceiling(max(d$Beta))
+  
+  # creates continuous position markers for x axis for entire chromosome. also creates tick points.
+  d$pos=NA
+  ticks=NULL
+  lastbase=0
+  numchroms=length(unique(d$CHR))
+  if (numchroms==1) {
+    d$pos=d$BP
+    ticks=floor(length(d$pos))/2+1
+  } else {
+    for (i in 1:length(unique(d$CHR))) {
+      if (i==1) {
+        d[d$CHR %in% unique(d$CHR)[i], ]$pos=d[d$CHR %in% unique(d$CHR)[i] , ]$BP
+      } else {
+        lastbase=lastbase+tail(subset(d, CHR == unique(d$CHR)[i-1])$BP, 1)
+        d[d$CHR %in% unique(d$CHR)[i], ]$pos=d[d$CHR %in% unique(d$CHR)[i], ]$BP+lastbase
+      }
+      ticks=c(ticks, d[d$CHR %in% unique(d$CHR)[i], ]$pos[floor(length(d[d$CHR %in% unique(d$CHR)[i], ]$pos)/2)+1])
+    }
+  }
+  
+  # create the plot
+    with(d, plot(pos, Beta, ylim = c(0,ymax), ylab = "|a|", xlab = "Chromosome", xaxt = "n", type = "n", cex = 0.3, yaxt = "n", main = Title, ...))
+    # then make an axis that has chromosome number instead of position
+    axis(1, at = ticks, lab = unique(d$CHR), cex.axis = xaxis.cex, las = xlas, srt = xsrt)
+    axis(2, cex.axis = yaxis.cex)
+    icol=1
+    for (i in unique(d$CHR)) {
+    	with(d[d$CHR %in% i, ],points(pos, Beta, col=colors[icol], cex=0.3, ...))
+    	icol = icol+1
+  }
+  
+  # create a new data frame with rows from the original data frame where SNP is in annotate character vector.
+  # then plot those points over the original graph, but with a larger point size and a different color.
+  if (!is.null(annotate)) {
+    d.annotate=d[which(d$SNP %in% annotate), ]
+    with(d.annotate, points(pos, Beta, col="red", cex=0.5, ...))
+  }
+  
+  # add threshold lines
+  if (suggestiveline) abline(h=suggestiveline, col="blue")
+  if (genomewideline) abline(h=genomewideline, col="red")
+}
+
+
+## 
+mrks <- readRDS("../../../KernelPred_Front/NIRS/InputData_NIRS_founders.rds")$mrks
+avenaMap <- read.delim("../../GenoData/avena_map.txt", header = T, sep = "\t")
+FAs <- c("14.0", "16.0", "16.1", "18.0", "18.1", "18.2", "18.3", "20.0", "20.1")
+
+for(i in FAs){
+  tmpBeta <- readRDS(paste0("../../../KernelPred_Front/Betas/Betas_C", i, ".rds"))
+  betas <- data.frame(tmpBeta$ETA[[1]]$b); colnames(betas) <- "beta"
+  
+  mapData <- merge(avenaMap, betas, by.x = "Marker", by.y = 0, all.x = F, all.y = T)
+  tmpMap <- mapData[is.na(mapData$Chrom) ,]
+  tmpMap$Chrom <- "Unk"
+  tmpMap$Start_pos <- 1:nrow(tmpMap)
+  mapData <- rbind(mapData[!is.na(mapData$Chrom) ,], tmpMap)
+  mapData$beta <- abs(mapData$beta)
+  
+  tmpRes <- data.frame(CHR = mapData$Chrom, BP = mapData$Start_pos, 
+                       Beta = mapData$beta, marker = mapData$Marker)
+  
+  tmpRes <- tmpRes[order(tmpRes$CHR, tmpRes$BP) ,] 
+  tmpRes.chr <- tmpRes[!tmpRes$CHR %in% "Unk" ,]; tmpRes.unk <- tmpRes[tmpRes$CHR %in% "Unk" ,]
+  tmpRes.chr <- droplevels(tmpRes.chr); tmpRes.unk <- droplevels(tmpRes.unk)
+  
+  Ymax <- max(tmpRes$Beta)*1.2; print(Ymax)
+  
+  pdf(paste0("../../../KernelPred_Front/Manuscript/SuppFigs/FA_C", i, ".pdf"), h = 2.4, w = 6.2)
+  nf = layout(rbind(c(1,1,2), 
+                    c(1,1,2)))
+  trait <- sub("\\.", ":", i)
+  manhattanOat(dataframe = tmpRes.chr, suggestiveline = F, genomewideline = F, Title = paste0("C", trait),
+               xaxis.cex = 0.5, xlas = 2, xsrt = 45, ymax = Ymax)
+  
+  plot(tmpRes.unk$BP, tmpRes.unk$Beta, pch = 19, cex = 0.3, main = "Total Lipid Content", 
+       ylab = "|a|", xlab = "index", ylim = c(0, Ymax))
+  
+  dev.off()
+}
+```
+
+## NIRS
+```{r, echo = T, eval = F}
+library(BGLR)
+
+rm(list = ls())
+
+InputFounds <- readRDS("../../../KernelPred_Front/NIRS/InputData_NIRS_founders.rds")
+
+mrks <- InputFounds$mrks
+mrks <- scale(mrks, center = T, scale = T)
+phenos <- InputFounds$phenotypes
+Ys <- phenos[, 4, drop = F]
+
+Zg <- model.matrix(~line-1, data = phenos)
+Ze <- model.matrix(~variable-1, data = phenos)
+
+ETA <- list()
+Wmat <- Zg %*% mrks
+ETA[[1]] <- list(X = Wmat, model = "BayesB")
+envKernel <- Ze %*% t(Ze)
+ETA[[2]] <- list(K = envKernel, model = "RKHS")
+
+# for(i in 1:ncol(Ys)){
+tmpmod <- BGLR(y = Ys[,1], ETA = ETA, nIter = 20000, burnIn = 5000, thin = 5)
+# }
+saveRDS(tmpmod, paste0("../../../KernelPred_Front/Betas/EliteBetas_", colnames(Ys)[1], ".rds"))
+```
+
+Manhattan plot
+```{r, echo = T, eval = F}
+rm(list = ls())
+
+manhattanOat <- function(dataframe, colors=c("gray10", "gray50"), ymax="max", xaxis.cex=1, yaxis.cex = 1, suggestiveline=NULL, genomewideline=NULL, annotate=NULL, xlas = NULL, xsrt = NULL,  Title, ...){
+  # Like regular oat, but more metropolitan
+  d=dataframe
+  
+  #throws error if you don't have columns named CHR, BP, and P in your data frame.
+  if (!("CHR" %in% names(d) & "BP" %in% names(d) & "Beta" %in% names(d))) stop("Make sure your data frame contains columns CHR, BP, and Beta")
+  
+  # sets colors based on colors argument.
+  colors <- rep(colors, length(unique((d$CHR))))[1:length(unique((d$CHR)))]
+  
+  # sets the maximum value on the y axis (on the -log10p scale).
+  if (ymax == "max") ymax<-ceiling(max(d$Beta))
+  
+  # creates continuous position markers for x axis for entire chromosome. also creates tick points.
+  d$pos=NA
+  ticks=NULL
+  lastbase=0
+  numchroms=length(unique(d$CHR))
+  if (numchroms==1) {
+    d$pos=d$BP
+    ticks=floor(length(d$pos))/2+1
+  } else {
+    for (i in 1:length(unique(d$CHR))) {
+      if (i==1) {
+        d[d$CHR %in% unique(d$CHR)[i], ]$pos=d[d$CHR %in% unique(d$CHR)[i] , ]$BP
+      } else {
+        lastbase=lastbase+tail(subset(d, CHR == unique(d$CHR)[i-1])$BP, 1)
+        d[d$CHR %in% unique(d$CHR)[i], ]$pos=d[d$CHR %in% unique(d$CHR)[i], ]$BP+lastbase
+      }
+      ticks=c(ticks, d[d$CHR %in% unique(d$CHR)[i], ]$pos[floor(length(d[d$CHR %in% unique(d$CHR)[i], ]$pos)/2)+1])
+    }
+  }
+  
+  # create the plot
+    with(d, plot(pos, Beta, ylim = c(0,ymax), ylab = "|a|", xlab = "Chromosome", xaxt = "n", type = "n", cex = 0.3, yaxt = "n", main = Title, ...))
+    # then make an axis that has chromosome number instead of position
+    axis(1, at = ticks, lab = unique(d$CHR), cex.axis = xaxis.cex, las = xlas, srt = xsrt)
+    axis(2, cex.axis = yaxis.cex)
+    icol=1
+    for (i in unique(d$CHR)) {
+    	with(d[d$CHR %in% i, ],points(pos, Beta, col=colors[icol], cex=0.3, ...))
+    	icol = icol+1
+  }
+  
+  # create a new data frame with rows from the original data frame where SNP is in annotate character vector.
+  # then plot those points over the original graph, but with a larger point size and a different color.
+  if (!is.null(annotate)) {
+    d.annotate=d[which(d$SNP %in% annotate), ]
+    with(d.annotate, points(pos, Beta, col="red", cex=0.5, ...))
+  }
+  
+  # add threshold lines
+  if (suggestiveline) abline(h=suggestiveline, col="blue")
+  if (genomewideline) abline(h=genomewideline, col="red")
+}
+
+
+## 
+mrks <- readRDS("../../../KernelPred_Front/NIRS/InputData_NIRS_founders.rds")$mrks
+avenaMap <- read.delim("../../GenoData/avena_map.txt", header = T, sep = "\t")
+lipNIR <- readRDS("../../../KernelPred_Front/Betas/EliteBetas_lipid.NIR.rds")
+
+betas <- data.frame(lipNIR$ETA[[1]]$b)
+
+mapData <- merge(avenaMap, betas, by.x = "Marker", by.y = 0, all.x = F, all.y = T)
+tmpMap <- mapData[is.na(mapData$Chrom) ,]
+tmpMap$Chrom <- "Unk"
+tmpMap$Start_pos <- 1:nrow(tmpMap)
+
+mapData <- rbind(mapData[!is.na(mapData$Chrom) ,], tmpMap)
+mapData$lipNIR.ETA..1...b <- abs(mapData$lipNIR.ETA..1...b)
+
+tmpRes <- data.frame(CHR = mapData$Chrom, BP = mapData$Start_pos, 
+                     Beta = mapData$lipNIR.ETA..1...b, marker = mapData$Marker)
+
+tmpRes <- tmpRes[order(tmpRes$CHR, tmpRes$BP) ,] 
+tmpRes.chr <- tmpRes[!tmpRes$CHR %in% "Unk" ,]; tmpRes.unk <- tmpRes[tmpRes$CHR %in% "Unk" ,]
+tmpRes.chr <- droplevels(tmpRes.chr); tmpRes.unk <- droplevels(tmpRes.unk)
+
+
+Ymax <- max(tmpRes$Beta)*1.2; print(Ymax)
+
+pdf("../../../KernelPred_Front/Manuscript/SuppFigs/ManhattanTotalLipid.pdf", h = 2.4, w = 6.2)
+
+nf = layout(rbind(c(1,1,2), 
+                  c(1,1,2)))
+
+manhattanOat(dataframe = tmpRes.chr, suggestiveline = F, genomewideline = F, Title = "Total Lipid Content",
+               xaxis.cex = 0.5, xlas = 2, xsrt = 45, ymax = Ymax)
+
+plot(tmpRes.unk$BP, tmpRes.unk$Beta, pch = 19, cex = 0.3, main = "Total Lipid Content", ylab = "|a|", 
+     xlab = "index", ylim = c(0, Ymax))
+
+dev.off()
+```

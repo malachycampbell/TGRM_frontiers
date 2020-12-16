@@ -1,0 +1,43 @@
+---
+title: "Create dendrogram"
+author: "Malachy Campbell"
+date: "12/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = "/Users/malachycampbell/Documents/Dropbox/Work/Oats/TargetedMet/")
+```
+
+# Create dendrogram for elite and diversity panel
+```{r, echo = T, eval = F}
+library(ape)
+library(dendextend)
+
+rm(list = ls())
+
+InputMTM <- readRDS("../../../KernelPred_Front/inputFiles_HCC/InputData_multitrait.rds")
+divNames <- read.csv("../../../TrevorOats/genotypes/results/diversity_t3_names.csv")
+eliteNames <- read.csv("../../../TrevorOats/genotypes/results/elite_t3_names.csv")
+
+divNames <- data.frame(t3_name = divNames$t3_name, pop = "Div")
+eliteNames <- data.frame(t3_name = eliteNames$t3_name, pop = "Elite")
+allNames <- merge(divNames, eliteNames, by = "t3_name", all = T)
+allNames$pop <- NA
+allNames$pop <- ifelse(is.na(allNames[,2]), "Elite", "Div")
+allNames <- allNames[allNames$t3_name %in% colnames(InputMTM$GRM) ,]
+allNames <- allNames[match(colnames(InputMTM$GRM), allNames$t3_name) ,]
+
+colorCodes <- c("Div" = wesanderson::wes_palette("Zissou1")[1], 
+                "Elite" = wesanderson::wes_palette("Zissou1")[5])
+
+pdf("../../../KernelPred_Front/Manuscript/SuppFigs/Dendro.pdf", h = 6.2, w = 6.2)
+plot(as.phylo(hc), type = "fan", 
+     tip.color = colorCodes[allNames$pop], 
+     edge.color = "grey60",
+     cex = 0.225, no.margin = T, align.tip.label = T)
+
+legend("topright", legend = c("Div.", "Elite"), 
+       fill = wesanderson::wes_palette("Zissou1")[c(1,5)], bty = "n", cex = 0.65)
+dev.off()
+```
