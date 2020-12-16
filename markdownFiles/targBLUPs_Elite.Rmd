@@ -1,0 +1,245 @@
+---
+title: "BLUPs for targeted metabolomics - Elite panel"
+author: "Malachy Campbell"
+date: "8/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = "/Users/malachycampbell/Documents/Dropbox/Work/Oats/TargetedMet/")
+```
+
+## Elite panel
+
+## Preprocessing
+First I create two new columns that indicate whether a line is a check or an entry (unreplicated). These are indicated by $check$ and $new$ respectively. The check column consists of c + 1 levels where c is the number of check lines and new consists of two levels binary indicator of whether line is unreplicated entry or check. 
+
+```{r, echo=T, eval = F}
+rm(list = ls())
+
+#function for adding check column for each environment. Returns a df of ONLY the env specified
+addChks <- function(df = NULL, metaIndx = NULL, ENV = NULL){
+  df <- df[df$env %in% ENV ,]
+  colIndx <- grep("C\\d{2}.\\d{1}", colnames(df))
+  tmp.meta <- df[, -colIndx][metaIndx]
+  
+  #add columns for GC data
+  chks <- names(table(tmp.meta$line)[table(tmp.meta$line) > 2])
+  
+  tmp.meta <- within(tmp.meta, {
+    new <- ifelse(tmp.meta$line %in% chks, 0, 1) #if line is a check then assign 0, else 1
+    })
+  tmp.meta <- within(tmp.meta, {
+    entryc <- ifelse(tmp.meta$new > 0, 999, tmp.meta$line) #checks will have a name, new entries will have 999
+    })
+  finalDat <- cbind(tmp.meta, df[,colIndx]^(1/3))
+  
+  return(finalDat)
+  }
+
+
+#Place to store all metabolite data from each stage
+FinalData <- list()
+
+FAMEel <- read.csv("Elite/FAME2017_metadata_and_abundance.csv")
+
+FAMEel <- rbind(addChks(df = FAMEel, metaIndx = c(1:9), ENV = "MN"),
+                addChks(df = FAMEel, metaIndx = c(1:9), ENV = "WI"),
+                addChks(df = FAMEel, metaIndx = c(1:9), ENV = "SD"))
+
+FinalData[["RawData"]] <- FAMEel
+
+saveRDS(FinalData, "Elite/FinalData.rds")
+```
+
+Check for outliers
+```{r, echo = T, eval = F}
+library(sommer)
+
+rm(list = ls())
+#data <- readRDS("FinalData.rds")
+data <- readRDS("Elite/FinalData.rds")
+
+FAMEel <- data$RawData
+
+FAMEel$block <- as.factor(FAMEel$block)
+FAMEel$new <- as.factor(FAMEel$new)
+FAMEel$entryc <- as.factor(FAMEel$entryc)
+FAMEel$batch <- as.factor(FAMEel$batch)
+
+colIndx <- grep("C\\d{2}.\\d{1}", colnames(FAMEel))
+
+#################
+## For GC data ##
+#################
+ResFAMEel <- list()
+
+dir.create("Elite/OutlierChk")
+for(env in c("MN", "SD", "WI")){
+  tmpFAMEel <- FAMEel[FAMEel$env %in% env ,]
+  
+  FAMEelpca <- prcomp(scale(as.matrix(tmpFAMEel[, colIndx]), center = T, scale = T))
+  FAMEel.pcs <- cbind(tmpFAMEel[,-colIndx], FAMEelpca$x[,1:9])
+  
+  tmpRes <- list()
+  
+  for(cmpd in 1:9){
+    tmp.dat <- FAMEel.pcs[c(1:11,(11 + cmpd) )]
+    colnames(tmp.dat)[12] <- "Y"
+    #tmp.mod <- asreml(fixed = Y ~ entryc, random = ~block + new:line, data = tmp.dat, aom = T)
+    full.mod <- mmer(fixed = Y ~ entryc, 
+                    random = ~block + new:line + batch, data = tmp.dat)
+    stdRes <- resid(full.mod) #standardized residuals
+    tmpRes[[cmpd]] <- list(mod = full.mod,
+                           stdRes = scale(full.mod$residuals))
+  
+  pdf(paste0("Elite/OutlierChk/elFAME_PC", env, "_", cmpd, ".pdf"))
+  plot(full.mod)
+  dev.off()
+  
+    }
+  ResFAMEel[[env]] <- tmpRes
+}
+
+saveRDS(ResFAMEel, "Elite/OutlierChk/OutlierCheck.rds")
+```
+
+Parese output
+```{r, echo = T, eval = F}
+rm(list = ls())
+
+Res <- readRDS("Elite/OutlierChk/OutlierCheck.rds")
+data <- readRDS("Elite/FinalData.rds")
+
+FAMEel <- data$RawData
+
+findBadSample <- function(results = NULL, thresh = NULL, metadata = NULL, trIndx = NULL, cond = NULL){
+  if(cond == "less"){
+    indx <- which(results[[trIndx]]$stdRes < thresh)
+  }else{
+    indx <- which(results[[trIndx]]$stdRes > thresh)
+  }
+  info <- metadata[indx,]
+  return(list(info = info,
+              indx = indx))
+}
+
+getHat <- function(sommerRes = NULL, trIndx = NULL){
+  #taken from sommer plot function to give same results
+  #will return leverage given output from sommer mmer function; acts on list so need to provide index
+  x <- sommerRes[[trIndx]]$mod
+  prov <- mmer(fixed = x$call$fixed, 
+               rcov = x$call$rcov, data = x$data, 
+        return.param = TRUE, na.method.Y = x$call$na.method.Y, 
+        na.method.X = x$call$na.method.X)
+  Xlist <- list()
+  for (o in 1:length(prov[[3]])) {
+        Xlist[[o]] <- kronecker(prov[[2]][[o]], prov[[3]][[o]])
+  }
+  Xm <- do.call(cbind, Xlist)
+  hat <- Xm %*% solve(t(Xm) %*% x$Vi %*% Xm) %*% t(Xm) %*% 
+            x$Vi
+  return(diag(hat))
+}
+
+#MN
+findBadSample(metadata = FAMEel[FAMEel$env %in% "MN" ,][,1:11], thresh = -10, 
+              trIndx = 3, results = Res$MN, cond = "less")
+findBadSample(metadata = FAMEel[FAMEel$env %in% "MN" ,][,1:11], thresh = -4, 
+              trIndx = 5, results = Res$MN, cond = "less")
+findBadSample(metadata = FAMEel[FAMEel$env %in% "MN" ,][,1:11], thresh = 6, 
+              trIndx = 7, results = Res$MN, cond = "greater")
+# $info
+#                                  pmfname env block column row plot     line CHECK batch new entryc
+# 16 16-Metabolomics_17_MN-1-8065-SD120640  MN     1      1   3 8065 SD120640    -1     1   1    999
+# 
+# $indx
+# [1] 16
+
+#WI
+findBadSample(metadata = FAMEel[FAMEel$env %in% "WI" ,][,1:11], thresh = -4, 
+              trIndx = 1, results = Res$WI, cond = "less")
+# $info
+#                                    pmfname env block column row plot    line CHECK batch new entryc
+# 746 746-Metabolomics_17_WI-12-8285-MN09223  WI    12     15  19 8285 MN09223    -1     5   1    999
+# 
+# $indx
+# [1] 245
+
+MN <- FAMEel[FAMEel$env %in% "MN" ,]; MN <- MN[!row.names(MN) %in% 16 ,]
+SD <- FAMEel[FAMEel$env %in% "SD" ,]
+WI <- FAMEel[FAMEel$env %in% "WI" ,]; WI <- WI[!row.names(WI) %in% 746 ,]
+
+data[["OutliersRemoved"]] <- rbind(MN, SD, WI)
+
+saveRDS(data, "Elite/FinalData.rds")
+```
+
+Calculate BLUPs
+```{r, echo = T, eval = F}
+library(sommer)
+
+rm(list = ls())
+
+data <- readRDS("Elite/FinalData.rds")
+
+FAMEel <- data$OutliersRemoved
+
+FAMEelBLUPs <- list()
+for(env in c("MN", "WI", "SD")){
+  tmpFAMEel <- FAMEel[FAMEel$env %in% env ,]
+  tmpFAMEel$line <- as.factor(tmpFAMEel$line); tmpFAMEel$line <- droplevels(tmpFAMEel$line)
+  tmpFAMEel$block <- as.factor(tmpFAMEel$block); tmpFAMEel$block <- droplevels(tmpFAMEel$block)
+  tmpFAMEel$new <- as.factor(tmpFAMEel$new); tmpFAMEel$new <- droplevels(tmpFAMEel$new)
+  tmpFAMEel$entryc <- as.factor(tmpFAMEel$entryc); tmpFAMEel$entryc <- droplevels(tmpFAMEel$entryc)
+  tmpFAMEel$row <- as.factor(tmpFAMEel$row); tmpFAMEel$row <- droplevels(tmpFAMEel$row)
+  tmpFAMEel$column <- as.factor(tmpFAMEel$column); tmpFAMEel$column <- droplevels(tmpFAMEel$column)
+  tmpFAMEel$batch <- as.factor(tmpFAMEel$batch); tmpFAMEel$batch <- droplevels(tmpFAMEel$batch)
+
+  colIndx <- grep("C\\d{2}.\\d{1}", colnames(tmpFAMEel))
+
+  #Places to store the results
+  BLUPs <- matrix(NA, ncol = length(colIndx), nrow = length(levels(tmpFAMEel$line)))
+  drBLUPs <- matrix(NA, ncol = length(colIndx), nrow = length(levels(tmpFAMEel$line)))
+  convInfo <- array()
+  H2 <- NULL
+  
+  for(cmpd in 1:length(colIndx)){
+    tmp.dat <- tmpFAMEel[c(1:11,(11 + cmpd) )]
+    colnames(tmp.dat)[12] <- c("Y")
+    
+    tmp.mod <- mmer(fixed = Y ~ entryc, 
+                    random = ~block + new:line + batch, 
+                    data = tmp.dat, na.method.X = "include")
+    
+    #error handling
+    if(length(tmp.mod) < 1){
+      H2 <- rbind(H2, data.frame(Estimate = NA, SE = NA))
+      BLUPs[,cmpd] <- rep(NA, nrow(BLUPs))
+      drBLUPs[,cmpd] <- rep(NA, nrow(BLUPs)) #deregressed blups checks will have NA
+      convInfo[cmpd] <- FALSE
+    }else{
+      PEV <- diag(tmp.mod$PevU$`new:line`$Y)
+      PEV <- PEV[grep("new1", names(PEV))]
+      varG <- as.numeric(tmp.mod$sigma$`new:line`)
+    
+      tmp.BLUPs <- tmp.mod$U$`new:line`$Y[grep("new1", names(tmp.mod$U$`new:line`$Y))]
+      H2 <- rbind(H2, pin(tmp.mod, h2 ~ V2 / ( V2 + V4)))
+      BLUPs[,cmpd] <- tmp.BLUPs #blups
+      drBLUPs[,cmpd] <- tmp.BLUPs / (1 - PEV/varG)#deregressed blups checks will have NA
+      convInfo[cmpd] <- tmp.mod$convergence
+    }
+  }
+  
+  colnames(BLUPs) <- colnames(drBLUPs) <- row.names(H2) <- colnames(tmpFAMEel)[colIndx]
+  Lines <- sub("new1:line", "", names(tmp.BLUPs))
+  
+  FAMEelBLUPs[[env]] <- list(BLUPs = data.frame(line = Lines, BLUPs),
+                             drBLUPs = data.frame(line = Lines, drBLUPs),
+                             H2 = H2,
+                             converged = convInfo)
+}
+
+data$BLUPs <- FAMEelBLUPs
+saveRDS(data, "Elite/FinalData.rds")
+```

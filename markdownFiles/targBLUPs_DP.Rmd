@@ -1,0 +1,141 @@
+---
+title: "BLUPs for targeted metabolomics - Diversity panel"
+author: "Malachy Campbell"
+date: "8/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = "/Users/malachycampbell/Documents/Dropbox/Work/Oats/TargetedMet/")
+```
+
+## Diversity panel
+
+### Outlier check
+```{r, echo = T, eval = F}
+library(sommer)
+
+rm(list = ls())
+
+untarDP <- readRDS("../DivPanel_Met_HH/DP_Ith_phenoData/FinalData.rds")
+FT <- read.table("../DivPanel_Met_HH/DP_Ith_phenoData/RNAseq18_Headingdate.txt", sep = "", header = T)
+FAMEdp <- read.csv("DP/FAME2018_metadata_and_abundance.csv")
+FAMEdp.meta <- FAMEdp[c(1:9)]
+
+## Add check entry column
+chks <- names(table(FAMEdp.meta$Line)[table(FAMEdp.meta$Line) > 1])
+
+FAMEdp.meta <- within(FAMEdp.meta, {
+  new <- ifelse(FAMEdp.meta$Line %in% chks, 0, 1) #if line is a check then assign 0, else 1
+  })
+
+FAMEdp.meta <- within(FAMEdp.meta, {
+  entryc <- ifelse(FAMEdp.meta$new > 0, 999, FAMEdp.meta$Line) #checks will have a name, new entries will have 999
+  })
+
+#Add info for heading date and block
+FT <- FT[FT$PlotID %in% FAMEdp.meta$plot ,]
+FT <- FT[match(FAMEdp.meta$plot, FT$PlotID) ,]
+plotBlock <- untarDP$RawData$GC[1:12]
+sum(FAMEdp$plot == plotBlock$plot) == nrow(FAMEdp)
+
+FAMEdp <- cbind(FAMEdp.meta, FT[c(3:7)], plotBlock[9:12], FAMEdp[c(10:ncol(FAMEdp))])
+
+FAMEdp$block <- as.factor(FAMEdp$block)
+FAMEdp$new <- as.factor(FAMEdp$new)
+FAMEdp$entryc <- as.factor(FAMEdp$entryc)
+FAMEdp$batch <- as.factor(FAMEdp$batch)
+
+FAMEpca <- prcomp(scale(as.matrix(FAMEdp[,21:ncol(FAMEdp)]), center = T, scale = T))
+
+FAMEdp.pcs <- cbind(FAMEdp[,-(21:ncol(FAMEdp))], FAMEpca$x[,1:9])
+
+Res <- list()
+dir.create("DP/OutlierChk")
+
+for(cmpd in 1:9){
+  tmp.dat <- FAMEdp.pcs[c(1:20,(20 + cmpd) )]
+  colnames(tmp.dat)[c(16, 21)] <- c("DTH", "Y")
+  #tmp.mod <- asreml(fixed = Y ~ entryc, random = ~block + new:line, data = tmp.dat, aom = T)
+  tmp.mod <- mmer(fixed = Y ~ entryc + DTH, 
+                  random = ~block + new:Line + batch, data = tmp.dat)
+  stdRes <- resid(tmp.mod) #standardized residuals
+  #nedf <- nrow(tmp.dat) - nrow(coef(tmp.mod)) #residual df
+  #stuRes <- stdRes / sqrt( (nedf - stdRes^2)/(nedf - 1) ) #studentized residuals
+  
+  Res[[cmpd]] <- list(mod = tmp.mod,
+                      stdRes = scale(tmp.mod$residuals))
+  
+  pdf(paste0("DP/OutlierChk/FAME_PC", cmpd, ".pdf"))
+  plot(tmp.mod)
+  dev.off()
+}
+
+saveRDS(Res, "DP/OutlierChk/OutlierCheck.rds")
+
+
+
+
+findBadSample <- function(results = NULL, thresh = NULL, metadata = NULL, trIndx = NULL, cond = NULL){
+  if(cond == "less"){
+    indx <- which(results[[trIndx]]$stdRes < thresh)
+  }else{
+    indx <- which(results[[trIndx]]$stdRes > thresh)
+  }
+  info <- metadata[indx,]
+  return(list(info = info,
+              indx = indx))
+}
+
+findBadSample(results = Res, thresh = 4, trIndx = 1, cond = "greater", metadata = FAMEdp.pcs[1:20])
+
+#################
+## No outliers ##
+#################
+
+saveRDS(list(rawData = FAMEdp), "DP/FinalData.rds")
+```
+
+
+Compute BLUPs for fatty acids.
+
+```{r, echo = T, eval = F}
+rm(list = ls())
+
+finalDat <- readRDS("DP/FinalData.rds")
+FAMEdp <- finalDat$rawData
+
+BLUPs <- matrix(NA, ncol = 9, nrow = 375)
+drBLUPs <- matrix(NA, ncol = 9, nrow = 375)
+convInfo <- array()
+H2 <- NULL
+for(cmpd in 21:ncol(FAMEdp)){
+  tmp.dat <- FAMEdp[c(1:20,cmpd)]
+  colnames(tmp.dat)[c(16,21)] <- c("DTH", "Y")
+  
+  tmp.mod <- mmer(fixed = Y ~ entryc + DTH, 
+                  random = ~block + new:Line + batch, 
+                  data = tmp.dat, na.method.X = "include")
+  
+  PEV <- diag(tmp.mod$PevU$`new:Line`$Y)
+  PEV <- PEV[grep("new1", names(PEV))]
+  varG <- as.numeric(tmp.mod$sigma$`new:Line`)
+  
+  tmp.BLUPs <- tmp.mod$U$`new:Line`$Y[grep("new1", names(tmp.mod$U$`new:Line`$Y))]
+  H2 <- rbind(H2, pin(tmp.mod, h2 ~ V2 / ( V2 + V4)))
+  BLUPs[,(cmpd - 20)] <- tmp.BLUPs #blups
+  drBLUPs[,(cmpd - 20)] <- tmp.BLUPs / (1 - PEV/varG)#deregressed blups checks will have NA
+  convInfo[(cmpd - 20)] <- tmp.mod$convergence
+}
+
+colnames(BLUPs) <- colnames(drBLUPs) <- row.names(H2) <- colnames(FAMEdp)[(21:ncol(FAMEdp))]
+Lines <- sub("new1:Line", "", names(tmp.BLUPs))
+row.names(BLUPs) <- row.names(drBLUPs) <- Lines
+
+finalDat$BLUPs <- list(BLUPs = BLUPs,
+                       drBLUPs = drBLUPs,
+                       H2 = H2, 
+                       converged = convInfo)
+
+saveRDS(finalDat, "DP/FinalData.rds")
+```
